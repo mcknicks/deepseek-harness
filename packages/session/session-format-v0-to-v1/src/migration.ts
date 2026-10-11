@@ -96,10 +96,36 @@ function normalizeReleasedV0Event(
   const retry = normalizeLegacyRetry(steering, sessionId, state.retryIds)
   const compaction = normalizeLegacyCompaction(retry, sessionId, state)
   const message = normalizeLegacyMessage(compaction, sessionId, state.messageIds)
-  if (message.type !== 'assistant/chunk') assertReleasedEventPayload(message, 0)
-  const messageId = eventMessageId(message)
-  if (messageId !== undefined) state.messageIds.set(message.seq, messageId)
-  return message
+  const permission = normalizeLegacyPermissionPreset(message)
+  const descriptor = normalizeLegacySubagentDescriptor(permission)
+  if (descriptor.type !== 'assistant/chunk') assertReleasedEventPayload(descriptor, 0)
+  const messageId = eventMessageId(descriptor)
+  if (messageId !== undefined) state.messageIds.set(descriptor.seq, messageId)
+  return descriptor
+}
+
+function normalizeLegacyPermissionPreset(event: SessionFormatEvent): SessionFormatEvent {
+  if (event.type !== 'permission/preset') return event
+  const data = releasedV0Record(event.data, `permission/preset ${event.seq} data`)
+  if (!Object.hasOwn(data, 'origin')) return event
+  // dsh-permission-presets 0.1.1-rc.1 stamped how the preset was selected
+  // (`default`, `inferred`, or `selection`); 0.1.1-rc.2 removed it and no
+  // later format carries it. Effective permission is the folded preset plus
+  // its sandbox and approval events, so the obsolete member is removed.
+  const { origin: _origin, ...current } = data
+  return { ...event, data: current }
+}
+
+function normalizeLegacySubagentDescriptor(event: SessionFormatEvent): SessionFormatEvent {
+  if (event.type !== 'subagent/descriptor') return event
+  const data = releasedV0Record(event.data, `subagent/descriptor ${event.seq} data`)
+  if (data['version'] !== 2) return event
+  // dsh-subagent 0.0.1-rc.3 through 0.1.1-rc.2 stamped version 2. Version 3's
+  // schema is a superset that adds only the optional agentReasoningEffort,
+  // and the catalog interpreter already admits versions 1 through 3, so the
+  // marker advances without changing any other fact and the version 3
+  // semantics below still validate the payload.
+  return { ...event, data: { ...data, version: 3 } }
 }
 
 function normalizeLegacyCompactionType(event: SessionFormatEvent): SessionFormatEvent {

@@ -277,6 +277,43 @@ describe('released v0 legacy normalization', () => {
     }])).toThrow(/malformed/)
   })
 
+  it('removes the released permission-preset origin without admitting anything else', () => {
+    const rows = [
+      { type: 'permission/preset', seq: 0, time: 1, data: { preset: 'workspace-write', origin: 'inferred' } },
+      { type: 'sandbox/mode', seq: 1, time: 2, data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', seq: 2, time: 3, data: { policy: 'ask' } },
+    ]
+
+    const events = migrate(rows).events
+    expect(events[0]?.data).toEqual({ preset: 'workspace-write' })
+    expect(events[1]?.data).toEqual({ mode: 'workspace-write' })
+    expect(events[2]?.data).toEqual({ policy: 'ask' })
+    // A member no released v0 writer produced still refuses: this is a
+    // bounded historical normalization, not a general passthrough.
+    expect(() => migrate([
+      { type: 'permission/preset', seq: 0, time: 1, data: { preset: 'workspace-write', stale: true } },
+    ])).toThrow(/unexpected member "stale"/)
+  })
+
+  it('advances the released descriptor version 2 marker and keeps version 3 validation', () => {
+    const rows = [
+      { type: 'subagent/descriptor', seq: 0, time: 1, data: {
+        version: 2, mode: 'continuable', provider: 'spawn', label: 'child',
+        agentProvider: 'deepseek-official', agentModel: 'deepseek-flash',
+      } },
+    ]
+
+    const events = migrate(rows).events
+    expect(events[0]?.data).toMatchObject({ version: 3, mode: 'continuable', label: 'child' })
+    // The advanced marker is validated under version 3 semantics: a payload
+    // that version 2 accepted without a label still refuses.
+    expect(() => migrate([
+      { type: 'subagent/descriptor', seq: 0, time: 1, data: {
+        version: 2, mode: 'continuable', provider: 'spawn',
+      } },
+    ])).toThrow(/label/)
+  })
+
   it('refuses invalid legacy relationship facts instead of rewriting them', () => {
     const turn = { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }
     const human = { type: 'user/message', seq: 1, time: 2, surfaceOp: 'append', data: {
